@@ -418,16 +418,16 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
                     for optimizer in optimizers:
                         scaler.step(optimizer)
                         optimizer.zero_grad()
-                    for scheduler in schedulers:
-                        scheduler.step()
                     scaler.update()
                 else:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
                     for optimizer in optimizers:
                         optimizer.step()
                         optimizer.zero_grad()
-                    for scheduler in schedulers:
-                        scheduler.step()
+
+            # Step schedulers every training step (not just accumulation steps)
+            for scheduler in schedulers:
+                scheduler.step()
 
             # Logging
             if step % 100 == 0:
@@ -457,6 +457,23 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
             step += 1
             if step % 100 == 0:
                 pbar.update(100)
+
+    # Apply any remaining accumulated gradients if training ended mid-cycle
+    if step % config.gradient_accumulation_steps != 0:
+        print(f"  🔄 Applying remaining accumulated gradients...")
+        if config.use_amp:
+            for optimizer in optimizers:
+                scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            for optimizer in optimizers:
+                scaler.step(optimizer)
+                optimizer.zero_grad()
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            for optimizer in optimizers:
+                optimizer.step()
+                optimizer.zero_grad()
 
     pbar.close()
 
