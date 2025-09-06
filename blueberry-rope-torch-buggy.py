@@ -15,6 +15,7 @@ from typing import List, Optional
 import warnings
 import os
 import pickle
+from torchtune.modules import RotaryPositionalEmbeddings
 warnings.filterwarnings('ignore')
 
 def set_seed(seed: int = 42):
@@ -182,20 +183,13 @@ class TextTokenDataset(Dataset):
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
         super().__init__()
-        angular_freq = (1 / 10000) ** torch.linspace(0, 1, steps=dim//4, dtype=torch.float32)
-        angular_freq = torch.cat([angular_freq, angular_freq.new_zeros(dim//4)])
-        t = torch.arange(max_seq_len, dtype=torch.float32)
-        theta = torch.einsum("i,j -> ij", t, angular_freq)
-        self.register_buffer('cos', theta.cos(), persistent=False)
-        self.register_buffer('sin', theta.sin(), persistent=False)
+        self.rope = RotaryPositionalEmbeddings(dim=dim, max_seq_len=max_seq_len, base=10000)
 
     def forward(self, x_BTHD: torch.Tensor):
-        assert self.cos.size(0) >= x_BTHD.size(-3)
-        cos, sin = self.cos[None, :x_BTHD.size(-3), None, :], self.sin[None, :x_BTHD.size(-3), None, :]
-        x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
-        y1 = x1 * cos + x2 * sin
-        y2 = x1 * (-sin) + x2 * cos
-        return torch.cat((y1, y2), 3).type_as(x_BTHD)
+        # x_BTHD shape: [B, T, H, D] - need to convert to [B, T, H, D] for torchtune
+        # torchtune expects [batch, seq_len, num_heads, head_dim]
+        # Our input is already [B, T, H, D] which matches torchtune's expectation
+        return self.rope(x_BTHD)
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model: int, n_heads: int, max_seq_len: int, dropout: float = 0.1):
@@ -210,20 +204,20 @@ class MultiHeadAttention(nn.Module):
         self.dropout = dropout
 
     def forward(self, x):
-        # batch_size, seq_len = x.size(0), x.size(1)
-        B, T = x.size(0), x.size(1)
-        qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_k).permute(2, 0, 3, 1, 4)
-        Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
+        batch_size, seq_len = x.size(0), x.size(1)
+        # B, T = x.size(0), x.size(1)
+        # qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_k).permute(2, 0, 3, 1, 4)
+        # Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
 
-        # qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
-        # qkv = qkv.permute(2, 0, 3, 1, 4)
-        # Q, K, V = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        Q, K, V = qkv[0], qkv[1], qkv[2] # [B, H, T, D]
 
-        # Q = self.rotary(Q)
-        # K = self.rotary(K)
+        Q = self.rotary(Q)
+        K = self.rotary(K)
         # Apply RoPE on [B, T, H, D]
-        Q = self.rotary(Q.transpose(1, 2)).transpose(1, 2)
-        K = self.rotary(K.transpose(1, 2)).transpose(1, 2)
+        # Q = self.rotary(Q.transpose(1, 2)).transpose(1, 2)
+        # K = self.rotary(K.transpose(1, 2)).transpose(1, 2)
 
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0

@@ -204,14 +204,14 @@ class MultiHeadAttention(nn.Module):
         self.dropout = dropout
 
     def forward(self, x):
-        # batch_size, seq_len = x.size(0), x.size(1)
-        B, T = x.size(0), x.size(1)
-        qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_k).permute(2, 0, 3, 1, 4)
-        Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
+        batch_size, seq_len = x.size(0), x.size(1)
+        # B, T = x.size(0), x.size(1)
+        # qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_k).permute(2, 0, 3, 1, 4)
+        # Q, K, V = qkv[0], qkv[1], qkv[2]  # [B, H, T, D]
 
-        # qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
-        # qkv = qkv.permute(2, 0, 3, 1, 4)
-        # Q, K, V = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(batch_size, seq_len, 3, self.n_heads, self.d_k)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        Q, K, V = qkv[0], qkv[1], qkv[2] # [B, H, T, D]
 
         # Q = self.rotary(Q)
         # K = self.rotary(K)
