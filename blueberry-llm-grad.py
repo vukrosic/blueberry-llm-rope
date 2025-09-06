@@ -382,7 +382,8 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
 
     # Training loop
     model.train()
-    step = 0
+    step = 0  # Counts actual optimization steps
+    batch_count = 0  # Counts individual batches
     start_time = time.time()
     best_val_loss = float('inf')
 
@@ -409,7 +410,7 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
                 loss.backward()
 
             # Optimizer step after accumulation
-            if (step + 1) % config.gradient_accumulation_steps == 0:
+            if (batch_count + 1) % config.gradient_accumulation_steps == 0:
                 if config.use_amp:
                     for optimizer in optimizers:
                         scaler.unscale_(optimizer)
@@ -425,11 +426,15 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
                         optimizer.step()
                         optimizer.zero_grad()
 
-            # Step schedulers every training step (not just accumulation steps)
-            for scheduler in schedulers:
-                scheduler.step()
+                # Step schedulers and increment step counter only after actual optimization
+                for scheduler in schedulers:
+                    scheduler.step()
+                step += 1
+                
+                # Update progress bar after each optimization step
+                pbar.update(1)
 
-            # Logging
+            # Logging based on optimization steps  
             if step % 100 == 0:
                 with torch.no_grad():
                     predictions = logits.argmax(dim=-1)
@@ -454,12 +459,10 @@ def train_model(config: ModelConfig, train_loader: DataLoader, val_loader: DataL
                 if eval_metrics['val_loss'] < best_val_loss:
                     best_val_loss = eval_metrics['val_loss']
 
-            step += 1
-            if step % 100 == 0:
-                pbar.update(100)
+            batch_count += 1
 
     # Apply any remaining accumulated gradients if training ended mid-cycle
-    if step % config.gradient_accumulation_steps != 0:
+    if batch_count % config.gradient_accumulation_steps != 0:
         print(f"  🔄 Applying remaining accumulated gradients...")
         if config.use_amp:
             for optimizer in optimizers:
