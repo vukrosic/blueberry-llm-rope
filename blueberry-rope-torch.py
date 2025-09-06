@@ -222,8 +222,8 @@ class MultiHeadAttention(nn.Module):
         attn_output = F.scaled_dot_product_attention(
             Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
         )
-        # attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.d_model)
-        attn_output = attn_output.transpose(1, 2).reshape(B, T, self.d_model)
+        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.d_model)
+        # attn_output = attn_output.transpose(1, 2).reshape(B, T, self.d_model)
         return self.w_o(attn_output)
 
 class FeedForward(nn.Module):
